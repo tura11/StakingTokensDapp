@@ -21,10 +21,12 @@ contract StakingFactory is Ownable {
 
     mapping(address=>mapping(address=>uint256)) public s_balancesForExactToken;
     mapping(address=>mapping(address=>uint256)) public s_stakes;
-    mapping(address=>uint256) public APY; // APY in basis points, 1000 = 10% etc.
+    mapping(address=>uint256) public s_apy; // APY in basis points, 1000 = 10% etc.
+    mapping(address=>mapping(address=>uint256)) public s_stakeStartTime;
 
     uint256 public constant MAX_DEPOSIT = 10 ether;
     uint256 public constant MAX_WITHDRAW = 20 ether;
+    uint256 public constant MIN_TIME_STAKE = 7 days;
 
 
     constructor() {
@@ -50,7 +52,18 @@ contract StakingFactory is Ownable {
 
 
     function tokenStake(address tokenAddress, uint256 amount) external {
-        
+        if(tokenAddress == address(0)) {
+            revert StakingFactory__ZeroAddress();
+        }
+        uint256 userBalance = s_balancesForExactToken[tokenAddress][msg.sender];
+        if(amount == 0 || amount > userBalance) {
+            revert StakingFactory__InvalidAmount();
+        }
+        s_balancesForExactToken[tokenAddress][msg.sender] -= amount;
+        s_stakes[tokenAddress][msg.sender] += amount;
+        if(s_stakeStartTime[tokenAddress][msg.sender] == 0) {
+            s_stakeStartTime[tokenAddress][msg.sender] = block.timestamp;
+        }
     }
 
 
@@ -90,7 +103,7 @@ contract StakingFactory is Ownable {
 
 
 
-    function setTokenAPY(address tokenAddress uint256 apyBasisPoints) internal onlyOwner {
+    function setTokenAPY(address tokenAddress, uint256 apyBasisPoints) internal onlyOwner {
         if(tokenAddress == address(0)) {
             revert StakingFactory__ZeroAddress();
         }
@@ -98,7 +111,29 @@ contract StakingFactory is Ownable {
         if(apyPercentage == 0) {
             revert StakingFactory__ApyCannotBeZero();
         }
-        APY[tokenAddress] = apyBasisPoints;
+        s_apy[tokenAddress] = apyBasisPoints;
+    }
+
+
+    function calculateReward(address tokenAddress) external view returns (uint256) {
+        if(tokenAddress == address(0)) {
+            revert StakingFactory__ZeroAddress();
+        }
+        uint256 apy = s_apy[tokenAddress];
+        if(apy == 0) {
+            revert StakingFactory__ApyCannotBeZero();
+        }
+        uint256 amount = s_balancesForExactToken[tokenAddress][msg.sender];
+        uint256 startTime = s_stakeStartTime[tokenAddress][msg.sender];
+        uint256 timeElapsed = block.timestamp - startTime;
+        if(timeElapsed == 0) {
+            return 0;
+        }
+        uint256 reward = (amount * apy * timeElapsed) / (365 days * 10000);
+        return reward;
     }
 
 }
+
+
+//REWARDS = (Amount × APY × TimeElapsed) / (365 days × 10000)
