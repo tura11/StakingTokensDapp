@@ -13,6 +13,7 @@ contract StakingFactory is Ownable {
     error StakingFactory__ApyCannotBeZero();
     error StakingFactory__MinTimeNotMet();
     error StakingFactory__UserNotStaked();
+    error StakingFactory__TimeLockNotExpired();
 
 
 
@@ -23,7 +24,12 @@ contract StakingFactory is Ownable {
     event Unstake(address indexed tokenAddress, address indexed staker, uint256 stakedAmount, uint256 reward);
     event Withdraw(address indexed tokenAddress, address indexed staker, uint256 amount);
 
-    address private s_owner;
+
+    struct APYchange{
+        uint256 newApy;
+        uint256 effectiveAt;
+    }
+
 
     // User Balance
     mapping(address => mapping(address => uint256)) public s_balances;
@@ -34,13 +40,14 @@ contract StakingFactory is Ownable {
     // Stake started time
     mapping(address => mapping(address => uint256)) public s_stakeStartTime;
 
+    mapping(address => APYchange) public s_apychanges;
+
     uint256 public constant MAX_DEPOSIT = 100 ether;
     uint256 public constant MAX_WITHDRAW = 100 ether;
     uint256 public constant MIN_STAKE_TIME = 7 days;
+    uint256 public constant APY_TIME_LOCK = 7 days;
 
-    constructor() {
-        s_owner = msg.sender; 
-    }
+    constructor() Ownable(msg.sender){}
 
     // ============ DEPOSIT ============
     function depositTokenToContract(address tokenAddress, uint256 amount) external {
@@ -131,16 +138,33 @@ contract StakingFactory is Ownable {
         emit Withdraw(tokenAddress, msg.sender, amount);
     }
 
-    // ============ OWNER ============
-    function setTokenAPY(address tokenAddress, uint256 apyBasisPoints) external onlyOwner {
+
+    function proposeNewAPY(address tokenAddress, uint256 apyBasisPoints) external onlyOwner {
         if(tokenAddress == address(0)) {
             revert StakingFactory__ZeroAddress();
         }
         if(apyBasisPoints == 0) {
             revert StakingFactory__ApyCannotBeZero();
         }
-        s_apy[tokenAddress] = apyBasisPoints;
+        s_apychanges[tokenAddress] = APYchange({
+            newApy: apyBasisPoints,
+            effectiveAt: block.timestamp + APY_TIME_LOCK
+        });
     }
+
+
+    function executeNewAPY(address tokenAddress) external onlyOwner {
+        if(tokenAddress == address(0)) {
+            revert StakingFactory__ZeroAddress();
+        }
+        APYchange memory change = s_apychanges[tokenAddress];
+        if(block.timestamp < change.effectiveAt) {
+            revert StakingFactory__TimeLockNotExpired();
+        }
+        s_apy[tokenAddress] = change.newApy;
+        delete s_apychanges[tokenAddress];
+    }
+
 
     // ============ VIEW FUNCTIONS ============
     
